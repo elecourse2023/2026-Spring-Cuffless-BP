@@ -1,0 +1,53 @@
+import serial
+import csv
+from datetime import datetime
+from collections import deque
+
+ser = serial.Serial('COM4', 115200, timeout=1)
+
+now = datetime.now().strftime("%Y%m%d_%H%M%S")
+filename = f"data_{now}.csv"
+
+# 4 ms sampling = 250 Hz
+# 최근 250개 샘플 = 약 1초 평균값을 DC 성분으로 사용
+dc_window = deque(maxlen=250)
+
+with open(filename, 'w', newline='') as f:
+    writer = csv.writer(f)
+    writer.writerow(['time_ms', 'sample_idx', 'ecg_v', 'ecg_ac_v', 'ppg', 'lead_off'])
+
+    while True:
+        line = ser.readline().decode(errors='ignore').strip()
+
+        if not line:
+            continue
+
+        data = line.split(',')
+
+        if len(data) == 5:
+            if data[0] == 'time_ms':
+                continue
+
+            time_ms = data[0]
+            sample_idx = data[1]
+            ecg_raw = float(data[2])
+            ppg = data[3]
+            lead_off = data[4]
+
+            # ECG ADC raw count -> voltage
+            ecg_v = ecg_raw / 4095 * 3.3
+
+            # 최근 1초 평균을 DC 값으로 추정
+            dc_window.append(ecg_v)
+            ecg_dc = sum(dc_window) / len(dc_window)
+
+            # DC 제거 ECG
+            ecg_ac_v = ecg_v - ecg_dc
+
+            ecg_v = round(ecg_v, 4)
+            ecg_ac_v = round(ecg_ac_v, 4)
+
+            print(time_ms, sample_idx, ecg_v, ecg_ac_v, ppg, lead_off)
+
+            writer.writerow([time_ms, sample_idx, ecg_v, ecg_ac_v, ppg, lead_off])
+            f.flush()
